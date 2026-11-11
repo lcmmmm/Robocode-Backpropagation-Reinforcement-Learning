@@ -1,0 +1,207 @@
+\documentclass[11pt,letterpaper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,booktabs,array,graphicx,xcolor,listings,float}
+\usepackage[hidelinks]{hyperref}
+\usepackage{caption}
+\captionsetup{font=small}
+\setlength{\parskip}{5pt}
+\setlength{\parindent}{1.2em}
+\newcommand{\question}[1]{\noindent\textbf{Question:}\begin{quote}#1\end{quote}\noindent\textbf{Answer:}\par}
+\lstset{basicstyle=\ttfamily\scriptsize,numbers=left,numberstyle=\tiny\color{gray},
+ numbersep=7pt,breaklines=true,breakatwhitespace=false,columns=fullflexible,
+ keepspaces=true,showstringspaces=false,tabsize=4,frame=none,
+ keywordstyle=\bfseries,commentstyle=\itshape\color{black!65},
+ aboveskip=8pt,belowskip=8pt}
+\input{stats.tex}
+\title{CPEN 502 -- Assignment 1\\Part 2: Reinforcement Learning using a Look-Up-Table}
+\author{Yujie Lin}
+\date{October 28, 2026}
+\begin{document}
+\maketitle
+\section*{(2) LUT States and Actions}
+\question{Describe the states and actions, their quantization, and the resulting total number of rows in the LUT.}
+A robot extending \texttt{AdvancedRobot} was implemented in Java for classic Robocode 1.9.5.6. It learns a state--action value function using Q-learning and a look-up table (LUT). All reported results come from actual headless Robocode battles against the unmodified built-in \texttt{sample.SpinBot}; the source, round-level logs and trained tables accompany this report.
+
+The continuous observations are reduced to five discrete variables. Energy is measured in Robocode energy units, and distances are measured in battlefield pixels. The bearing is the enemy's direction relative to the robot's current body heading, computed from its latest scanned position.
+\begin{center}\small
+\begin{tabular}{p{1.12in}cp{3.65in}}
+\toprule
+State variable & Bins & Quantization \\\midrule
+Own energy & 3 & $[0,30)$, $[30,70)$, $[70,\infty)$ \\
+Enemy energy & 3 & Same thresholds, using the latest scan \\
+Enemy distance & 3 & $[0,200)$, $[200,400)$, $[400,\infty)$ \\
+Relative bearing & 4 & Front: $[-45^\circ,45^\circ)$; right: $[45^\circ,135^\circ)$; back: $[135^\circ,180^\circ]\cup[-180^\circ,-135^\circ)$; left: $[-135^\circ,-45^\circ)$ \\
+Near a wall & 2 & 1 if the robot centre is less than 80 pixels from any wall; otherwise 0 \\
+\bottomrule
+\end{tabular}
+\end{center}
+Thus, the state space has $3\times3\times3\times4\times2=216$ states. Each state has six available actions, giving
+\[
+\boxed{216\text{ state rows}\times6\text{ action columns}=1,296\text{ Q-values}.}
+\]
+Equivalently, a flattened table has \textbf{1,296 state--action rows}, each storing one scalar $Q(s,a)$. Both conventions describe the same LUT; no separate table entry is allocated for terminal states.
+
+\newpage
+\subsection*{Actions and Table Implementation}
+Each decision selects one of the following macro-actions for 16 simulation ticks, unless the round terminates earlier. Movement uses asynchronous commands so radar and gun tracking continue while the robot moves.
+\begin{center}\small
+\begin{tabular}{clp{3.9in}}
+\toprule
+ID & Action & Command and firing behaviour \\\midrule
+0 & Forward & Command 120 pixels forward; fire power 2 when ready. \\
+1 & Backward & Command 120 pixels backward; fire power 2 when ready. \\
+2 & Left arc & Command 120 pixels forward and $45^\circ$ left; fire power 2. \\
+3 & Right arc & Command 120 pixels forward and $45^\circ$ right; fire power 2. \\
+4 & Stop and fire low & Command zero movement and rotation; fire power 1. \\
+5 & Stop and fire high & Command zero movement and rotation; fire power 3. \\
+\bottomrule
+\end{tabular}
+\end{center}
+The commands are replaced at the next decision, so the requested 120 pixels need not be completed. Stopping still obeys the simulator's deceleration. All actions use the same fixed aiming routine: point the gun at the latest observed enemy position and fire only when the gun is cool, the scan is at most four ticks old, the angular error is below 0.12 radians, and energy exceeds bullet power by 0.1. The LUT learns movement and firing mode; radar tracking and gun aiming are fixed support routines.
+
+Writing the bin coordinates as $(e_o,e_n,d,b,w)$, the state and flat indices are
+\[
+s=((((e_o\cdot3+e_n)\cdot3+d)\cdot4+b)\cdot2+w),\qquad i=6s+a.
+\]
+All Q-values start at zero. The Q array requires $1,296\times8=10,368$ bytes, and a parallel integer visit-count array requires 5,184 bytes, excluding Java object overhead. Quantization therefore keeps the table small enough for the robot's data allowance.
+
+\textbf{Consistency with Part 1.} The Java \texttt{CommonInterface} preserves the method names \texttt{load}, \texttt{save}, \texttt{train} and \texttt{output\_for} from the Python interface in Part 1. The input is a six-element vector containing the five state bins and an action. \texttt{output\_for} returns a scalar; \texttt{train(x,target)} returns the pre-update half squared error, as in Part 1. For the LUT it installs the supplied value directly; the RL controller first calculates $Q+\alpha(y-Q)$. This is semantic interface compatibility across languages, rather than a claim that the original Python class can be inserted into Java unchanged.
+
+\textbf{Saving the learned table.} At the end of the final round, \texttt{save} writes all values and visit counts using \texttt{RobocodeFileOutputStream}. The big-endian file contains an 8-byte header and 1,296 $(\texttt{double},\texttt{int})$ entries, totalling \textbf{15,560 bytes}. \texttt{load} validates the header, dimensions and entries before replacing the table. CSV exports include every row, even entries with zero visits, for later neural-network training.
+
+\textbf{Representation limits.} The table omits velocity, gun heat, absolute position and enemy motion. It also uses a possibly stale enemy scan. Different physical situations can therefore share one state. This is a practical approximation to a Markov state and limits any claim of convergence to an optimal Robocode policy.
+
+\newpage
+\section*{(3) Learning Performance}
+\subsection*{Experimental Setup and Reward Generation}
+Every condition was trained from a fresh zero LUT for \textbf{800 rounds per seed}, using seeds 0--4, followed by \textbf{200 evaluation rounds per seed}. The battlefield is $800\times600$, with one \texttt{sample.SpinBot} opponent, default gun cooling 0.1 and default inactivity setting. Battlefield initialization is randomized by the engine. Each condition uses the same five seed identifiers for Robocode's \texttt{RandomFactory} and the robot's independent action generator. Evaluation uses new seeds 10000--10004, sets $\epsilon=0$, disables learning and reloads the corresponding trained table.
+
+There are seven conditions: Q-learning with intermediate rewards at $\epsilon\in\{0,0.1,0.3,0.6,1\}$; SARSA with intermediate rewards at $\epsilon=0.1$; and Q-learning with terminal-only rewards at $\epsilon=0.1$. An additional zero-LUT evaluation provides an untrained reference. In total, this is $7\times5\times(800+200)+5\times200=\textbf{36,000 rounds}$.
+
+Both learners use $\alpha=0.1$ and $\gamma=0.95$. With $r$ the sum of rewards since the previous decision, Q-learning uses
+\[
+y_Q=r+\gamma\max_{a'}Q(s',a'),\qquad
+Q(s,a)\leftarrow Q(s,a)+\alpha[y_Q-Q(s,a)].
+\]
+SARSA replaces the maximum with $Q(s',a')$, where $a'$ is the next action selected by the same $\epsilon$-greedy behaviour policy. The selected action is then actually executed. At a win or death, the final target is $y=r$ with \textbf{no bootstrap} and the last transition is updated exactly once. The terminal reward is $+10$ for a win and $-10$ for death.
+
+For the intermediate-reward condition, event handlers additionally generate
+\[
+ r_{\rm hit}=D(p)/10,\qquad r_{\rm hit\ by\ bullet}=-D(p)/10,
+ \qquad r_{\rm wall}=-0.2,
+\]
+where $D(p)=4p+\max(0,2(p-1))$ is the nominal damage of a bullet of power $p$. Bullet-hit rewards use nominal damage, which can exceed actual energy removed by a final hit. All events between decisions contribute to the pending reward; the terminal-only condition suppresses these intermediate terms. No separate reward is issued for firing, missing or colliding with a robot.
+
+Discounting is \emph{per decision}, not per simulation tick; within a macro-action, event rewards are summed without extra temporal discount. A bullet landing after a later decision is credited to the action active when the event is received. This delayed-credit approximation is shared by all conditions.
+
+\textbf{Measurement.} The primary outcome is the fraction of rounds producing a WinEvent; deaths, including simultaneous deaths, count as non-wins. This avoids comparisons of differently scaled rewards. Curves show a trailing 50-round win rate averaged over five seeds; shading is $\pm1$ sample standard deviation across seeds. Evaluation bars use the same seed-level mean and standard deviation over five 200-round blocks. These are variability bands, not confidence intervals. All frozen evaluations were checked to leave the binary LUT unchanged.
+
+\newpage
+\subsection*{(3a) Learning Progress and Convergence}
+\question{Draw a graph of a parameter reflecting learning progress and comment on convergence.}
+Win rate was selected as the main progress measure. Figure~\ref{fig:learning} also shows the mean absolute temporal-difference error per round and the cumulative number of visited state--action pairs. The TD statistic is averaged over updates within a round, then over the trailing 50 rounds and the five seeds.
+\begin{figure}[H]\centering
+\includegraphics[width=\linewidth,height=2.8in,keepaspectratio]{figures/learning.pdf}
+\caption{Q-learning with intermediate rewards and $\epsilon=0.1$. Trailing 50-round win rate and TD error; coverage uses unsmoothed cumulative visit counts. Shading indicates one standard deviation across five seeds.}\label{fig:learning}
+\end{figure}
+\input{discussion_learning.tex}
+Constant $\alpha$, continuing exploration, randomized initial conditions and the compressed observation space all permit persistent fluctuations. A plateau in win rate is evidence of a performance level over this training budget, rather than proof of convergence of every Q-value. Mean absolute TD error need not approach zero under stochastic transitions and rewards, even if the estimated values have stabilized.
+
+\newpage
+\subsection*{(3b) On-Policy versus Off-Policy Learning}
+\question{Compare the performance of the robot using on-policy and off-policy learning.}
+Q-learning is the off-policy method, and SARSA is the on-policy method. Both use intermediate rewards, $\epsilon=0.1$, the same state/action representation and the same training budget. Only the bootstrap target changes:
+\[
+\underbrace{r+\gamma\max_{a'}Q(s',a')}_{\text{Q-learning: greedy target policy}}
+\quad\text{versus}\quad
+\underbrace{r+\gamma Q(s',a'_{\epsilon\text{-greedy}})}_{\text{SARSA: behaviour-policy target}}.
+\]
+\begin{figure}[H]\centering
+\includegraphics[width=.88\linewidth]{figures/policy.pdf}
+\caption{On-policy and off-policy comparison. Left: measured training win rate. Right: frozen greedy evaluation after 800 training rounds. Shading and error bars are one standard deviation across seeds.}\label{fig:policy}
+\end{figure}
+\begin{center}\small\input{table_policy.tex}\end{center}
+\input{discussion_policy.tex}
+Both algorithms explore with the same probability. Q-learning evaluates a greedy continuation, while SARSA accounts for the sampled exploratory continuation. This can make SARSA sensitive to the risks of exploratory actions, but does not guarantee higher performance.
+
+Evaluation sets $\epsilon=0$ for both methods. Since SARSA was trained to evaluate an $\epsilon$-greedy policy, its training curve is also relevant. Shared seed identifiers control the starting random streams; divergent actions subsequently produce different trajectories.
+
+\newpage
+\subsection*{(3c) Terminal-Only versus Intermediate Rewards}
+\question{Implement terminal-only rewards and compare the behaviour with intermediate rewards.}
+The terminal-only robot receives zero reward during a round and $+10/-10$ at its end. The intermediate-reward robot receives the same terminal reward plus the bullet and wall terms defined above. Both use Q-learning, $\epsilon=0.1$, $\alpha=0.1$ and $\gamma=0.95$.
+\begin{figure}[H]\centering
+\includegraphics[width=.90\linewidth]{figures/rewards.pdf}
+\caption{Reward-design comparison. Training and frozen evaluation win rates use a common outcome measure, rather than comparing the different reward totals. Error bars and shading show one standard deviation across seeds.}\label{fig:rewards}
+\end{figure}
+\begin{center}\small\input{table_rewards.tex}\end{center}
+\input{discussion_rewards.tex}
+Terminal-only learning must propagate final outcomes backward through repeated visits. Intermediate events give more frequent shooting and wall feedback. The behaviour table measures damage and collisions directly.
+
+These terms are not potential-based shaping and also change the optimized objective. The observed advantage is conditional on this opponent and training budget.
+
+\newpage
+\section*{(4) Exploration}
+\subsection*{(4a) Performance at Different Exploration Rates}
+\question{Compare training with different values of $\epsilon$, including no exploration, and provide performance graphs versus $\epsilon$.}
+At each decision, the robot chooses uniformly from all six actions with probability $\epsilon$ and chooses a greedy action with probability $1-\epsilon$. Thus, with a unique maximizer, the greedy action has probability $1-\epsilon+\epsilon/6$ and each other action has probability $\epsilon/6$. Exploration can select the greedy action too.
+
+Five constant rates, $\epsilon=0,0.1,0.3,0.6,1.0$, were tested using Q-learning and intermediate rewards. All start with a zero LUT, and ties between maximizing actions are broken uniformly at random in every condition. Therefore, $\epsilon=0$ removes \emph{explicit} exploration but still permits random actions when Q-values tie. At initialization all six actions tie; this differs from fixing the first action on every tie and avoids an arbitrary action-order bias.
+\begin{figure}[H]\centering
+\includegraphics[width=.84\linewidth]{figures/epsilon_curves.pdf}
+\caption{Training curves for five fixed exploration probabilities. Each line is the mean trailing 50-round win rate across five independent training seeds; shading is one standard deviation.}\label{fig:epsilon_curves}
+\end{figure}
+\input{discussion_exploration_curves.tex}
+At $\epsilon=1$, actions remain uniformly random throughout training even though Q-learning continues updating the table. Its training win rate therefore measures random behaviour, while its subsequent $\epsilon=0$ evaluation tests the learned greedy values. The two quantities answer different questions and need not agree.
+
+\newpage
+\subsection*{Performance versus Exploration Probability}
+\begin{figure}[H]\centering
+\includegraphics[width=.9\linewidth]{figures/epsilon_summary.pdf}
+\caption{Performance versus the exploration rate used during training. Orange: average win rate over all 800 training rounds. Blue: frozen greedy evaluation over 200 new rounds. Error bars are one standard deviation across five seeds; connecting lines guide the eye between tested rates.}\label{fig:epsilon_summary}
+\end{figure}
+\begin{center}\small\input{table_epsilon.tex}\end{center}
+\input{discussion_exploration_summary.tex}
+The best observed rate is conditional on this opponent, reward function, quantization and 800-round budget. A constant high exploration rate can lower online performance through repeated suboptimal moves; zero explicit exploration can exploit useful early estimates but can also neglect actions once ties disappear. The experiment does not establish a universally optimal exploration rate. No decaying schedule was tested.
+
+\newpage
+\subsection*{Implementation Validation and Reproducibility}
+Checks passed for all 1,296 index/decode mappings, the half squared error interface, TD arithmetic, terminal updates, greedy action choice, uniform exploration, unbiased tie-breaking, saved Q-values/visit counts, file dimensions and rejection of corrupt files. Every recorded condition contains the expected round count. Evaluations leave the trained binary LUT byte-identical. The robot source, controller, experiment drivers and analysis script are included in the appendix; all raw logs, seed-level tables and trained LUTs are included in the accompanying package. JVM version, scheduling and skipped simulation turns can affect exact reruns.
+
+\textbf{Preparing for the neural replacement.} A later network can learn from the exported state--action vectors and unrestricted real Q targets. The original XOR network's two inputs and bounded sigmoid output must be adapted to this six-coordinate input and Q-value scale. Saving the LUT provides supervised examples, while the common method names preserve the controller's conceptual interface.
+
+\section*{References}
+\begin{enumerate}
+\item R. S. Sutton and A. G. Barto. \emph{Reinforcement Learning: An Introduction}, 2nd ed., MIT Press, 2018, Sections 6.4--6.5. \url{https://www.andrew.cmu.edu/course/10-703/textbook/BartoSutton.pdf}
+\item Robocode project. Classic Robocode 1.9.5.6 distribution and sample robot source. \url{https://github.com/robo-code/robocode/releases/tag/VER_1_9_5_6}
+\item Robocode project. \emph{AdvancedRobot}, \emph{Rules}, \emph{RobocodeEngine} and \emph{BattleSpecification} API documentation. The public documentation is version 1.10.0; the implementation was compiled and executed against 1.9.5.6. \url{https://robocode.sourceforge.io/docs/robocode/}
+\end{enumerate}
+The learning equations follow reference 1. The engine, sample opponent, event API and bullet-damage rule are from references 2--3. All tables and graphs in this report were calculated from the accompanying Robocode runs; they are not adapted from reference results.
+
+\newpage
+\appendix
+\newgeometry{left=.85in,right=.85in,top=.85in,bottom=.85in}
+\lstset{basicstyle=\ttfamily\fontsize{7.5}{8.6}\selectfont}
+\section*{Appendix A Source Code}
+\subsection*{A1 CommonInterface.java}
+\lstinputlisting[language=Java]{src/lutbot/CommonInterface.java}
+\subsection*{A2 LUT.java}
+\lstinputlisting[language=Java]{src/lutbot/LUT.java}
+\newpage
+\subsection*{A3 LearningTank.java}
+\lstinputlisting[language=Java]{src/lutbot/LearningTank.java}
+\newpage
+\subsection*{A4 RunBattle.java}
+\lstinputlisting[language=Java]{src/RunBattle.java}
+\newpage
+\subsection*{A5 LUTChecks.java}
+\lstinputlisting[language=Java]{src/LUTChecks.java}
+\newpage
+\subsection*{A6 run\_experiments.py}
+\lstinputlisting[language=Python]{run_experiments.py}
+\subsection*{A7 run\_baseline.py}
+\lstinputlisting[language=Python]{run_baseline.py}
+\newpage
+\subsection*{A8 analyze.py}
+\lstinputlisting[language=Python]{analyze.py}
+\end{document}

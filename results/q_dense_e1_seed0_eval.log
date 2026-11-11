@@ -1,0 +1,16 @@
+Loaded net.sf.robocode.api
+Loaded net.sf.robocode.core
+Loading plugins from /workspace/scratch/22f3c4367645/output/part2/work/seed0/libs
+Loaded net.sf.robocode.ui.editor
+Loaded net.sf.robocode.repository
+Loaded net.sf.robocode.host
+Loaded net.sf.robocode.ui
+Loaded net.sf.robocode.sound
+Loaded net.sf.robocode.battle
+Initializing version check date.
+WARNING: A terminally deprecated method in java.lang.System has been called
+WARNING: System::setSecurityManager has been called by net.sf.robocode.host.security.RobocodeSecurityManager (file:/workspace/scratch/22f3c4367645/output/part2/work/seed0/libs/robocode.host-1.9.5.6.jar)
+WARNING: Please consider reporting this to the maintainers of net.sf.robocode.host.security.RobocodeSecurityManager
+WARNING: System::setSecurityManager will be removed in a future release
+sample.SpinBot score=24858 wins=148
+lutbot.LearningTank* score=18398 wins=52

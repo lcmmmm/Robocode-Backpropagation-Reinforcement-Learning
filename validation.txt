@@ -1,0 +1,3 @@
+PASS: LUT arithmetic, indexing, epsilon selection, tie breaking, saved values and visits, file format and corrupt-file rejection.
+PASS: 75 round-level CSVs contain 36,000 sequential rounds; frozen evaluations have zero updates; terminal-only rewards are +/-10; all 35 binary LUTs have the correct format.
+PASS: run_experiments.py verified each frozen evaluation leaves its trained LUT byte-identical.

@@ -1,0 +1,71 @@
+{
+  "engine": "Robocode 1.9.5.6",
+  "opponent": "sample.SpinBot",
+  "battlefield": [
+    800,
+    600
+  ],
+  "train_rounds": 800,
+  "evaluation_rounds": 200,
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "evaluation_seeds": [
+    10000,
+    10001,
+    10002,
+    10003,
+    10004
+  ],
+  "conditions": [
+    [
+      "q_dense_e0",
+      "q",
+      true,
+      0.0
+    ],
+    [
+      "q_dense_e01",
+      "q",
+      true,
+      0.1
+    ],
+    [
+      "q_dense_e03",
+      "q",
+      true,
+      0.3
+    ],
+    [
+      "q_dense_e06",
+      "q",
+      true,
+      0.6
+    ],
+    [
+      "q_dense_e1",
+      "q",
+      true,
+      1.0
+    ],
+    [
+      "sarsa_dense_e01",
+      "sarsa",
+      true,
+      0.1
+    ],
+    [
+      "q_terminal_e01",
+      "q",
+      false,
+      0.1
+    ]
+  ],
+  "alpha": 0.1,
+  "gamma": 0.95,
+  "action_ticks": 16
+}
