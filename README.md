@@ -1,4 +1,4 @@
-# CPEN 502 Part 2 — Robocode LUT reinforcement learning
+# Robocode LUT reinforcement learning
 
 This package contains real Robocode experiment data, a submission report, Java
 source, plotting code, and trained look-up tables. It does not contain a substitute
